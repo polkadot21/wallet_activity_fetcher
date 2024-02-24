@@ -1,0 +1,6 @@
+/.github
+/.env
+/Dockerfile
+/docker-compose.yml
+/walletActivityParser
+/*.json
