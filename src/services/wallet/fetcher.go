@@ -2,13 +2,17 @@ package wallet
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/time/rate"
 	"io/ioutil"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"walletActivityParser/src/logger"
 )
 
@@ -25,18 +29,21 @@ const (
 )
 
 type Fetcher struct {
-	cfg    *config.Config
-	logger *logger.Logger
+	cfg     *config.Config
+	logger  *logger.Logger
+	limiter *rate.Limiter
 }
 
 func New(
 	cfg *config.Config,
 	log *logger.Logger,
 ) *Fetcher {
-	return &Fetcher{
+	fetcher := Fetcher{
 		cfg:    cfg,
 		logger: log,
 	}
+	fetcher.InitRateLimiter(25, 50)
+	return &fetcher
 }
 
 func (f *Fetcher) blockGetCurrentBlockNumber() (int64, error) {
@@ -102,22 +109,51 @@ func (f *Fetcher) getERC20Transactions(blockNumber int64) ([]string, error) {
 
 func (f *Fetcher) countAddressActivity(startBlock int64) map[string]int {
 	activityMap := make(map[string]int)
-	f.logger.Infof("fetching erc20 transactions in %v blocks & counting top %v active addresses", f.cfg.NBlocks, f.cfg.NTopWallets)
-	for block := startBlock; block > startBlock-f.cfg.NBlocks; block-- {
-		addresses, err := f.getERC20Transactions(block)
-		if err != nil {
-			f.logger.Errorf("Error fetching transactions for block", block, ":", err)
-			continue
-		}
+	var mu sync.Mutex // Used to safely update activityMap from multiple goroutines
 
+	f.logger.Infof("fetching erc20 transactions in %v blocks & counting top %v active addresses", f.cfg.NBlocks, f.cfg.NTopWallets)
+
+	startTime := time.Now()
+	var wg sync.WaitGroup // WaitGroup to wait for all goroutines to finish
+
+	// Channel to receive addresses from goroutines
+	addressChan := make(chan []string, f.cfg.NBlocks)
+
+	for block := startBlock; block > startBlock-f.cfg.NBlocks; block-- {
+		wg.Add(1)
+		go func(b int64) {
+			defer wg.Done()
+			addresses, err := f.getERC20Transactions(b)
+			if err != nil {
+				f.logger.Errorf("Error fetching transactions for block %d: %v", b, err)
+				return
+			}
+			addressChan <- addresses
+		}(block)
+	}
+
+	// Close the channel once all goroutines have finished
+	go func() {
+		wg.Wait()
+		close(addressChan)
+	}()
+
+	// Collect addresses from the channel and update the activityMap
+	for addresses := range addressChan {
 		for _, address := range addresses {
+			mu.Lock()
 			if _, exists := activityMap[address]; !exists {
 				activityMap[address] = 1
 			} else {
 				activityMap[address]++
 			}
+			mu.Unlock()
 		}
 	}
+
+	duration := time.Since(startTime)
+	f.logger.Infof("Completed fetching and processing in %s", duration)
+
 	return activityMap
 }
 
@@ -171,7 +207,17 @@ func (f *Fetcher) FetchAndStore() {
 	f.logger.Infof("Successfully saved top %v addresses to %s", f.cfg.NTopWallets, f.cfg.SavePath)
 }
 
+func (f *Fetcher) InitRateLimiter(rps float64, burst int) {
+	f.limiter = rate.NewLimiter(rate.Limit(rps), burst)
+}
+
 func (f *Fetcher) post(request JsonRPCRequest) (map[string]interface{}, error) {
+	err := f.limiter.Wait(context.Background())
+	if err != nil {
+		f.logger.Errorf("Rate limiter: %v", err)
+		return nil, err
+	}
+
 	payloadInfo, err := request.String()
 	if err != nil {
 		f.logger.Errorf("failed creating payload info: %s", err)
@@ -192,6 +238,21 @@ func (f *Fetcher) post(request JsonRPCRequest) (map[string]interface{}, error) {
 		return nil, err
 	}
 	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		// Read the response body
+		bodyBytes, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			f.logger.Errorf("HTTP POST request returned non-OK status: %d, but response body could not be read: %v", response.StatusCode, err)
+			return nil, fmt.Errorf("HTTP POST request returned non-OK status: %d, but response body could not be read: %v", response.StatusCode, err)
+		}
+
+		responseBody := string(bodyBytes)
+
+		f.logger.Errorf("HTTP POST request returned non-OK status: %d, response: %s", response.StatusCode, responseBody)
+
+		return nil, fmt.Errorf("HTTP POST request returned non-OK status: %d, response: %s", response.StatusCode, responseBody)
+	}
 
 	// Decode the JSON response
 	var result map[string]interface{}
