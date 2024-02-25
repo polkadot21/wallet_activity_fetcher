@@ -42,7 +42,7 @@ func New(
 		cfg:    cfg,
 		logger: log,
 	}
-	fetcher.InitRateLimiter(25, 50)
+	fetcher.InitRateLimiter(10, 10)
 	return &fetcher
 }
 
