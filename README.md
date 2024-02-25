@@ -8,6 +8,27 @@ where N is a user-defined parameter.
 An active wallet is one that engages in receiving or transferring ERC20 tokens. The activity score of a wallet 
 increases with the number of transactions it participates in.
 
+### Disclaimer
+
+Please note that the addresses obtained through this tool include both **Externally Owned Addresses (EOAs)** and
+**Contract addresses**. For instance, top 2 addresses for block `19305605`:
+
+```json
+[
+    {
+        "address": "0xdac17f958d2ee523a2206206994597c13d831ec7", // usdt
+        "activity": 1114
+    },
+    {
+        "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // usdc
+        "activity": 248
+    },
+  ...
+]
+
+```
+
+
 ## RPC Node Docs
 
 For detailed information on the Ethereum JSON-RPC API and specifics about the `eth_blockNumber` method used by our
