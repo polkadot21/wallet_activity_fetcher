@@ -46,11 +46,7 @@ func (f *Fetcher) blockGetCurrentBlockNumber() (int64, error) {
 		Params:  []interface{}{},
 		ID:      1,
 	}
-	payloadInfo, err := payload.String()
-	if err != nil {
-		return 0, err
-	}
-	f.logger.Infof("sending post request to %s, with payload %s", f.cfg.RpcEndpoint, payloadInfo)
+
 	result, err := f.post(payload)
 	if err != nil {
 		f.logger.Errorf("error sending post request to %s, error: %s", f.cfg.RpcEndpoint, err)
@@ -58,9 +54,10 @@ func (f *Fetcher) blockGetCurrentBlockNumber() (int64, error) {
 
 	blockNumber, err := strconv.ParseInt(result["result"].(string), 0, 64)
 	if err != nil {
+		f.logger.Errorf("error parsing str block number %s as int, error: %s", result["result"], err)
 		return 0, err
 	}
-
+	f.logger.Infof("parsed block number %v", blockNumber)
 	return blockNumber, nil
 }
 
@@ -175,22 +172,32 @@ func (f *Fetcher) FetchAndStore() {
 }
 
 func (f *Fetcher) post(request JsonRPCRequest) (map[string]interface{}, error) {
+	payloadInfo, err := request.String()
+	if err != nil {
+		f.logger.Errorf("failed creating payload info: %s", err)
+		return nil, err
+	}
+	f.logger.Infof("sending post request to %s, with payload %s", f.cfg.RpcEndpoint, payloadInfo)
+
 	payloadBytes, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		f.logger.Errorf("failed to marshal request: %w", err)
+		return nil, err
 	}
 
 	// Perform the HTTP POST request
 	response, err := http.Post(f.cfg.RpcEndpoint, contentType, bytes.NewBuffer(payloadBytes))
 	if err != nil {
-		return nil, fmt.Errorf("HTTP POST request failed: %w", err)
+		f.logger.Errorf("HTTP POST request failed: %w", err)
+		return nil, err
 	}
 	defer response.Body.Close()
 
 	// Decode the JSON response
 	var result map[string]interface{}
 	if err = json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		f.logger.Errorf("failed to decode response: %w", err)
+		return nil, err
 	}
 
 	return result, nil
