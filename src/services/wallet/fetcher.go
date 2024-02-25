@@ -94,11 +94,11 @@ func (f *Fetcher) getERC20Transactions(blockNumber int64) ([]string, error) {
 			// Check if the input starts with the ERC20 Transfer method signature
 			if strings.HasPrefix(input, erc20Prefix) {
 				// Add the "from" address
-				if from, ok := transaction["from"].(string); ok && !contains(addresses, from) {
+				if from, ok := transaction["from"].(string); ok {
 					addresses = append(addresses, from)
 				}
 				// Add the "to" address from the transaction, not the transfer recipient
-				if to, ok := transaction["to"].(string); ok && !contains(addresses, to) {
+				if to, ok := transaction["to"].(string); ok {
 					addresses = append(addresses, to)
 				}
 			}
@@ -262,13 +262,4 @@ func (f *Fetcher) post(request JsonRPCRequest) (map[string]interface{}, error) {
 	}
 
 	return result, nil
-}
-
-func contains(slice []string, str string) bool {
-	for _, v := range slice {
-		if v == str {
-			return true
-		}
-	}
-	return false
 }
